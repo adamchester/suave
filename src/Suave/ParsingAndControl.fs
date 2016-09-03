@@ -19,7 +19,7 @@ module internal ParsingAndControl =
   open Suave.Sockets.Control
   open Suave.Sockets.SocketOp.Operators
   open Suave.Tcp
-  
+
   open Suave.Utils
   open Suave.Utils.Bytes
   open Suave.Utils.Parsing
@@ -32,7 +32,7 @@ module internal ParsingAndControl =
   let inline free context connection =
     connection.segments
     |> List.iter (fun (x : BufferSegment) ->
-      connection.bufferManager.FreeBuffer (x.buffer, context)) 
+      connection.bufferManager.FreeBuffer (x.buffer, context))
 
   /// Load a readable plain-text stream, based on the protocol in use. If plain HTTP
   /// is being used, the stream is returned as it, otherwise a new SslStream is created
@@ -41,7 +41,7 @@ module internal ParsingAndControl =
     match runtime.matchedBinding.scheme with
     | HTTP    ->
       return connection
-    | HTTPS o -> 
+    | HTTPS o ->
       return! runtime.tlsProvider.wrap (connection,o)
     }
 
@@ -56,14 +56,16 @@ module internal ParsingAndControl =
 
     let facade = new ConnectionFacade(ctxOuter)
 
-    let rec loop (_ : HttpContext) = async {
+    let rec loop (ctx : HttpContext) = async {
       let event message =
-       eventX message 
+       eventX message
        >> setSingleName "Suave.ParsingAndControl.httpLoop.loop"
 
-      logger.verbose (event "Processing request... -> processor")
+      logger.verbose (event "Processing request ({requestTraceId})"
+                      >> Message.setField "requestTraceId" ctx.request.trace.reqId)
       let! result' = facade.processRequest
-      logger.verbose (event "Processed request. <- processor")
+      logger.verbose (event "Processed request ({requestTraceId})"
+                      >> Message.setField "requestTraceId" ctx.request.trace.reqId)
       match result' with
       | Choice1Of2 result ->
         match result with
@@ -73,7 +75,7 @@ module internal ParsingAndControl =
         | Some ctx ->
           let! result'' = HttpOutput.addKeepAliveHeader ctx |> HttpOutput.run consumer
           match result'' with
-          | Choice1Of2 result -> 
+          | Choice1Of2 result ->
             match result with
             | None -> ()
             | Some ctx ->
@@ -112,7 +114,7 @@ module internal ParsingAndControl =
           | Choice2Of2 err ->
             logger.verbose (event "Socket error while sending BAD_REQUEST, exiting"
                             >> setFieldValue "error" err)
-            
+
         | err ->
           logger.verbose (event "Socket error while processing request, exiting"
                           >> setFieldValue "error" err)

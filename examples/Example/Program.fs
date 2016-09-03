@@ -17,7 +17,18 @@ open Suave.State.CookieStateStore
 let basicAuth =
   Authentication.authenticateBasic ((=) ("foo", "bar"))
 
-let logger = Targets.create Verbose
+// Use a console target that makes for nice human consumption
+let logger = LiterateConsoleTarget(
+              Info,
+              options = { LiterateOptions.create() with
+                            getLogLevelText = function
+                                              | Verbose -> "V"
+                                              | Debug -> "D"
+                                              | Info -> "I"
+                                              | Warn -> "W"
+                                              | Error -> "E"
+                                              | Fatal -> "F"  }
+             ) :> Logger
 
 ///  With this workflow you can write WebParts like this
 let task : WebPart =
@@ -45,7 +56,7 @@ let myApp =
 // typed routes
 let testApp =
   choose [
-    log logger logFormat >=> never
+    logStructured logger logFormatStructured >=> never
     pathScan "/add/%d/%d"   (fun (a,b) -> OK((a + b).ToString()))
     pathScan "/minus/%d/%d" (fun (a,b) -> OK((a - b).ToString()))
     pathScan "/divide/%d/%d" (fun (a,b) -> OK((a / b).ToString()))
@@ -102,6 +113,30 @@ open System.IO
 open Suave.Sockets
 open Suave.Sockets.Control
 
+type LoggingKind =
+  | BoringOldText | Structured
+  override x.ToString() = sprintf "%A" x
+
+let getAnExceptionWithADeepStackTrace name =
+  let mutable theException = Unchecked.defaultof<exn>
+  let m7 name = raise (System.IO.DirectoryNotFoundException(name))
+  let m6 name = m7 name
+  let m5 name = m6 name
+  let m4 name =
+    try
+      m5 name
+    with
+    | inner ->
+      raise (System.AggregateException("some inner stuff happened", [inner]))
+  let m3 name = m4 name
+  let m2 name = m3 name
+  let m1 name = m2 name
+  try
+    m1 name
+  with
+  | ex -> theException <- ex
+  theException
+
 let app =
   choose [
     GET >=> path "/hello" >=> never
@@ -109,6 +144,11 @@ let app =
     path "/neverme" >=> never >=> OK (Guid.NewGuid().ToString())
     path "/guid" >=> OK (Guid.NewGuid().ToString())
     path "/hello" >=> OK "Hello World"
+    path "/demoError" >=> (fun ctx ->
+      logger.log Info (Message.eventX "About to raise an exception, hold tight!")
+      raise (getAnExceptionWithADeepStackTrace ("demoError")) |> ignore
+      fail
+    )
     path "/byte-stream" >=> (fun ctx ->
 
       let write (conn, _) = socket {
@@ -195,7 +235,20 @@ let app =
           >=> OK "Doooooge"
         RequestErrors.NOT_FOUND "Found no handlers"
       ]
-    ] >=> log logger logFormat
+    ]
+    >=> logWithLevelStructured Info logger (fun ctx ->
+      // Print a human readable structured message at Info level each request
+      let fields = [
+        "serverHost", box ctx.request.host
+        "requestMethod", box ctx.request.``method``
+        "clientIp", box ctx.clientIpTrustProxy
+        "requestUrl", box ctx.request.url
+        "responseStatusCode", box (ctx.response.status.code)
+        "responseStatusReason", box (ctx.response.status.reason)
+      ]
+      "Recieved {requestMethod} at {requestUrl} from {clientIp} and "
+      + "responded with {responseStatusReason} ({responseStatusCode})", Map fields
+    )
 
 (*
 // using Suave.OpenSSL
